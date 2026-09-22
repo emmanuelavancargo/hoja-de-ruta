@@ -225,12 +225,30 @@
     margin: 4px 0 -6px;
   }
 
-  /* ---- format rejection ---- */
+  /* ---- empty state ---- */
+  #intro { display: flex; flex-direction: column; gap: 14px; align-items: flex-start; }
+  .intro-grid {
+    display: grid; gap: 12px; width: 100%;
+    grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  }
+  .intro-card {
+    background: var(--surface); border: 1px solid var(--line-soft);
+    border-radius: 10px; padding: 14px 16px;
+  }
+  .intro-dir {
+    font-family: 'IBM Plex Mono', monospace; font-weight: 600; font-size: 12px;
+    letter-spacing: .04em; color: var(--ink); display: block; margin-bottom: 5px;
+  }
+  .intro-dir em { font-style: normal; color: var(--accent); padding: 0 2px; }
+  .intro-card p { margin: 0; font-size: 13.5px; color: var(--ink-soft); line-height: 1.45; }
+
+  /* ---- format reference / rejection ---- */
   .fmt {
     background: var(--surface);
     border: 1px solid color-mix(in srgb, var(--danger) 45%, var(--line));
     border-radius: 12px; overflow: hidden; box-shadow: var(--shadow);
   }
+  .fmt.fmt-plain { border-color: var(--line); }
   .fmt-head {
     display: flex; gap: 13px; align-items: flex-start;
     padding: 16px 18px;
@@ -304,6 +322,21 @@
   </div>
 
   <div id="msg" hidden></div>
+
+  <div id="intro">
+    <div class="intro-grid">
+      <div class="intro-card">
+        <span class="intro-dir">Excel <em>→</em> PDF</span>
+        <p>Arma el pedido de preparación: un bloque por parada, con el contacto del destino, casilla para tildar y subtotales.</p>
+      </div>
+      <div class="intro-card">
+        <span class="intro-dir">PDF <em>→</em> Excel</span>
+        <p>Recupera la planilla desde un PDF generado acá. Los datos de origen viajan dentro del archivo.</p>
+      </div>
+    </div>
+    <button class="linkish" id="verFormato" type="button">¿Qué formato tiene que tener el Excel?</button>
+  </div>
+
   <div id="fmt" hidden></div>
 
   <div id="loaded" hidden style="display:flex;flex-direction:column;gap:20px">
@@ -330,19 +363,19 @@
   var SCHEMA = [
     { col: 'N° Transporte',          key: 'transporte',  tipo: 'cod',  req: true,  ej: '200024835' },
     { col: 'Entrega',                key: 'entrega',     tipo: 'cod',  req: true,  ej: '80134467' },
-    { col: 'Solicitante',            key: 'solicitante', tipo: 'cod',  req: false, ej: '2322587552' },
-    { col: 'Nombre del solicitante', key: 'nombre',      tipo: 'txt',  req: true,  ej: 'NAVEYRA JUAN MARIO' },
-    { col: 'Nombre Pagador',         key: 'pagador',     tipo: 'txt',  req: false, ej: 'FERLEA GANADERA SA' },
+    { col: 'Solicitante',            key: 'solicitante', tipo: 'cod',  req: false, ej: '2312345678' },
+    { col: 'Nombre del solicitante', key: 'nombre',      tipo: 'txt',  req: true,  ej: 'Razón social del solicitante' },
+    { col: 'Nombre Pagador',         key: 'pagador',     tipo: 'txt',  req: false, ej: 'Razón social del pagador' },
     { col: 'Descripción Material',   key: 'material',    tipo: 'txt',  req: true,  ej: 'SEM. MAIZ DUO 225 PWUE' },
     { col: 'Descripción Calibre',    key: 'calibre',     tipo: 'txt',  req: false, ej: 'R16' },
     { col: 'Cantidad entrega',       key: 'cantidad',    tipo: 'num',  req: true,  ej: '10' },
     { col: 'Banda',                  key: 'banda',       tipo: 'txt',  req: false, ej: 'B2' },
-    { col: 'Nombre Centro',          key: 'centro',      tipo: 'txt',  req: false, ej: 'P051-Gamadel S.A.' },
+    { col: 'Nombre Centro',          key: 'centro',      tipo: 'txt',  req: false, ej: 'P051-Centro de distribución' },
     { col: 'Provincia',              key: 'provincia',   tipo: 'txt',  req: false, ej: 'Buenos Aires' },
     { col: 'Población',              key: 'poblacion',   tipo: 'txt',  req: true,  ej: 'Coronel Vidal' },
-    { col: 'Dirección',              key: 'direccion',   tipo: 'txt',  req: false, ej: 'CALLE 16 879' },
+    { col: 'Dirección',              key: 'direccion',   tipo: 'txt',  req: false, ej: 'Calle y altura, o lat/long' },
     { col: 'Lote',                   key: 'lote',        tipo: 'txt',  req: false, ej: 'puede ir vacío' },
-    { col: 'Creado por',             key: 'creadoPor',   tipo: 'txt',  req: false, ej: 'RCASTANARES' }
+    { col: 'Creado por',             key: 'creadoPor',   tipo: 'txt',  req: false, ej: 'Usuario que generó la planilla' }
   ];
   var COLS = SCHEMA.map(function (s) { return s.col; });
   var KEYS = SCHEMA.map(function (s) { return s.key; });
@@ -366,56 +399,6 @@
     this.message = problemas.join(' · ');
   }
   FormatError.prototype = Object.create(Error.prototype);
-
-  /* ── sample: the model route sheet ───────────────────────────────── */
-  var S_ROWS = [
-    ['80134467','2322587552','NAVEYRA JUAN MARIO','FERLEA GANADERA SA','SEM. MAIZ DUO 225 PWUE','R16',10,'B2','Coronel Vidal','-37.455613, -57.729530'],
-    ['80134594','2322587552','NAVEYRA JUAN MARIO','NAVEYRA JOSE LUIS','SEM. MAIZ DUO 225 PWUE','R16',15,'B2','Coronel Vidal','-37.455613, -57.729530'],
-    ['80136823','2322587552','NAVEYRA JUAN MARIO','PEREZ EDUARDO JOSE','SEM MAIZ KWS 13-160 VIP3 MAX+CRU 80MSEM','R9.5',5,'B1','Coronel Vidal','-37.455613, -57.729530'],
-    ['80136823','2322587552','NAVEYRA JUAN MARIO','PEREZ EDUARDO JOSE','SEM. MAIZ KWS60-050 VIP3FULL CRE+PON 80M','C10',10,'B1','Coronel Vidal','-37.455613, -57.729530'],
-    ['80135358','3071903686','ASTRESUR SOCIEDAD DE RESPONSABILIDA','CIA. DE TIERRAS SUD ARGENTINO S.A.','SEM. MAIZ KWS60-050 VIP3FULL CRE+PON 80M','C9.5',87,'B2','BALCARCE','CALLE 16 879 - ENTRE LAS CALLES 879'],
-    ['80135358','3071903686','ASTRESUR SOCIEDAD DE RESPONSABILIDA','CIA. DE TIERRAS SUD ARGENTINO S.A.','SEM. MAIZ KWS 60-050 HR CRE+PON 80M','C11.5',10,'B1','BALCARCE','CALLE 16 879 - ENTRE LAS CALLES 879'],
-    ['80136828','3071903686','ASTRESUR SOCIEDAD DE RESPONSABILIDA','ASTRESUR SOCIEDAD DE RESPONSABILIDAD LI','SEM MAIZ KM 4216 G MAX+QUAT+CRU 80M SEM','R11.5',6,'B1','BALCARCE','CALLE 16 879 - ENTRE LAS CALLES 879'],
-    ['80136829','3071903686','ASTRESUR SOCIEDAD DE RESPONSABILIDA','FELICE HNOS S.R.L.','SEM MAIZ KWS 19-120 VIP3 MAX+CRU 80MSEM','C10.5',18,'B1','BALCARCE','CALLE 16 879 - ENTRE LAS CALLES 879'],
-    ['80136830','3071903686','ASTRESUR SOCIEDAD DE RESPONSABILIDA','NADDEO DANTE RICARDO','SEM. MAIZ DUO 225 PWUE','C21',29,'B1','BALCARCE','CALLE 16 879 - ENTRE LAS CALLES 879'],
-    ['80136831','3071903686','ASTRESUR SOCIEDAD DE RESPONSABILIDA','PUCHURI-MAYOL DE MAYOL L. Y G.','SEM. MAIZ DUO 225 PWUE','C21',24,'B1','BALCARCE','CALLE 16 879 - ENTRE LAS CALLES 879'],
-    ['80136832','3071903686','ASTRESUR SOCIEDAD DE RESPONSABILIDA','PUCHURI-MAYOL DE MAYOL L. Y G.','SEM. MAIZ S 13-916 VIP3 CRE+PON 80M','C13L',26,'B1','BALCARCE','CALLE 16 879 - ENTRE LAS CALLES 879'],
-    ['80136833','3071903686','ASTRESUR SOCIEDAD DE RESPONSABILIDA','ASTRESUR SOCIEDAD DE RESPONSABILIDAD LI','SEM MAIZ KM3916 VIP3 MAXIM+CRUIS 80M SEM','R12',27,'B1','BALCARCE','CALLE 16 879 - ENTRE LAS CALLES 879'],
-    ['80136833','3071903686','ASTRESUR SOCIEDAD DE RESPONSABILIDA','ASTRESUR SOCIEDAD DE RESPONSABILIDAD LI','SEM MAIZ KWS 13-160 VIP3 MAX+CRU 80MSEM','C14L',45,'B1','BALCARCE','CALLE 16 879 - ENTRE LAS CALLES 879'],
-    ['80136833','3071903686','ASTRESUR SOCIEDAD DE RESPONSABILIDA','ASTRESUR SOCIEDAD DE RESPONSABILIDAD LI','SEM. MAIZ KWS 60-950 VIP3 CRE+PON 80M','C10',12,'B1','BALCARCE','CALLE 16 879 - ENTRE LAS CALLES 879'],
-    ['80136845','3071903686','ASTRESUR SOCIEDAD DE RESPONSABILIDA','NESTOR ANIBAL GALARRAGA S R L','SEM. MAIZ KWS60-050 VIP3FULL CRE+PON 80M','C9.5',54,'B2','BALCARCE','CALLE 16 879 - ENTRE LAS CALLES 879'],
-    ['80136848','3071903686','ASTRESUR SOCIEDAD DE RESPONSABILIDA','ASTRESUR SOCIEDAD DE RESPONSABILIDAD LI','SEM. MAIZ KWS60-050 VIP3FULL CRE+PON 80M','C10',8,'B1','BALCARCE','CALLE 16 879 - ENTRE LAS CALLES 879'],
-    ['80135430','3071903686','ASTRESUR SOCIEDAD DE RESPONSABILIDA','EL CENCERRO S A','SEM MAIZ S 11-762 VIP3 CRE PON 80M SEM','C14L',50,'B1','BALCARCE','CALLE 16 879 - ENTRE LAS CALLES 879'],
-    ['80135430','3071903686','ASTRESUR SOCIEDAD DE RESPONSABILIDA','EL CENCERRO S A','SEM. MAIZ S 3972 VIP3 MAXQ CRU+FOR 80M','C14L',50,'B1','BALCARCE','CALLE 16 879 - ENTRE LAS CALLES 879'],
-    ['80136887','3070884815','GUIRA GUAZU SOCIEDAD ANONIMA','GUIRA GUAZU SOCIEDAD ANONIMA','SEM. MAIZ IS 2738 MGRR2 80.000 SM','R11.5',100,'B1','NECOCHEA','-38.548066995800106, -58.6926165423'],
-    ['80136888','3070884815','GUIRA GUAZU SOCIEDAD ANONIMA','GUIRA GUAZU SOCIEDAD ANONIMA','SEM MAIZ IS 2773 VT3PRO 80.000 SEMILLAS','SPR',52,'CE','NECOCHEA','-38.548066995800106, -58.6926165423'],
-    ['80136889','3070884815','GUIRA GUAZU SOCIEDAD ANONIMA','GUIRA GUAZU SOCIEDAD ANONIMA','SEM MAIZ IS 550 VT3P X 80.000 SEM','R11.5',19,'B1','NECOCHEA','-38.548066995800106, -58.6926165423'],
-    ['80136890','3070884815','GUIRA GUAZU SOCIEDAD ANONIMA','GUIRA GUAZU SOCIEDAD ANONIMA','SEM MAIZ IS 799 TRECEPTA 80.000 SEMILLAS','R11.5',58,'B1','NECOCHEA','-38.548066995800106, -58.6926165423'],
-    ['80136890','3070884815','GUIRA GUAZU SOCIEDAD ANONIMA','GUIRA GUAZU SOCIEDAD ANONIMA','SEM. MAIZ IS 2738 MGRR2','R11.5',39,'B1','NECOCHEA','-38.548066995800106, -58.6926165423'],
-    ['80136890','3070884815','GUIRA GUAZU SOCIEDAD ANONIMA','GUIRA GUAZU SOCIEDAD ANONIMA','SEM. MAIZ IS 2738 MGRR2','C9.5',7,'B2','NECOCHEA','-38.548066995800106, -58.6926165423'],
-    ['80136893','3070884815','GUIRA GUAZU SOCIEDAD ANONIMA','GUIRA GUAZU SOCIEDAD ANONIMA','SEM MAIZ IS 2773 VT3PRO 80.000 SEMILLAS','SPR',59,'CE','NECOCHEA','-38.548066995800106, -58.6926165423'],
-    ['80136893','3070884815','GUIRA GUAZU SOCIEDAD ANONIMA','GUIRA GUAZU SOCIEDAD ANONIMA','SEM MAIZ IS 782 VIPTERA3 80.000 SEMILLAS','C10',64,'B1','NECOCHEA','-38.548066995800106, -58.6926165423'],
-    ['80136893','3070884815','GUIRA GUAZU SOCIEDAD ANONIMA','GUIRA GUAZU SOCIEDAD ANONIMA','SEM. MAIZ IS 2738 MGRR2','C9.5',105,'B2','NECOCHEA','-38.548066995800106, -58.6926165423'],
-    ['80136893','3070884815','GUIRA GUAZU SOCIEDAD ANONIMA','GUIRA GUAZU SOCIEDAD ANONIMA','SEM MAIZ IS 2789 VIPTERA3 80.000 SEMILLA','C10',57,'B1','NECOCHEA','-38.548066995800106, -58.6926165423']
-  ];
-
-  function sampleDoc() {
-    return {
-      rows: S_ROWS.map(function (r) {
-        return { transporte:'200024835', entrega:r[0], solicitante:r[1], nombre:r[2],
-          pagador:r[3], material:r[4], calibre:r[5], cantidad:r[6], banda:r[7],
-          centro:'P051-Gamadel S.A.', provincia:'Buenos Aires', poblacion:r[8],
-          direccion:r[9], lote:'', creadoPor:'RCASTANARES' };
-      }),
-      contactos: [
-        { nombre:'NAVEYRA JUAN MARIO', contacto:'Juan Mario Naveyra', telefono:'2235 06-2900' },
-        { nombre:'ASTRESUR SOCIEDAD DE RESPONSABILIDA', contacto:'Agustin Cerezuela', telefono:'2266 53-2796' },
-        { nombre:'EL CENCERRO S A', contacto:'Sergio', telefono:'2266 55-2368' },
-        { nombre:'GUIRA GUAZU SOCIEDAD ANONIMA', contacto:'Mauro', telefono:'2262 61-3729' }
-      ],
-      origen: 'ejemplo'
-    };
-  }
 
   /* ── helpers ─────────────────────────────────────────────────────── */
   var $ = function (id) { return document.getElementById(id); };
@@ -981,6 +964,7 @@
       '</section>';
     }).join('');
 
+    $('intro').hidden = true;
     $('loaded').hidden = false;
   }
 
@@ -1004,6 +988,30 @@
   }
   function clearSay() { $('msg').hidden = true; }
 
+  /* The schema reference, shared by the rejection panel and the
+     "¿qué formato?" link — one description of the format, not two. */
+  function formatRefHtml() {
+    return '<div class="fmt-body">' +
+      '<h3>Formato esperado</h3>' +
+      '<p>En la primera hoja, una fila con estos 15 encabezados y las entregas debajo. ' +
+        'El orden de las columnas no importa, pero los nombres sí — y no puede faltar ninguna.</p>' +
+      '<div class="tscroll"><table class="fmt-table">' +
+        '<thead><tr><th>Columna</th><th>Tipo de dato</th><th></th><th>Ejemplo</th></tr></thead>' +
+        '<tbody>' + SCHEMA.map(function (s) {
+          return '<tr>' +
+            '<td class="nm">' + esc(s.col) + '</td>' +
+            '<td class="ty">' + TIPO_LABEL[s.tipo] + '</td>' +
+            '<td class="' + (s.req ? 'req">obligatoria' : 'opt">opcional') + '</td>' +
+            '<td class="eg">' + esc(s.ej) + '</td>' +
+          '</tr>';
+        }).join('') + '</tbody>' +
+      '</table></div>' +
+      '<p>Las entregas se cortan en la primera fila sin «N° Transporte». Debajo puede ir ' +
+        'la fila de total y una tabla de contactos con los encabezados ' +
+        '«Nombre del solicitante», «Contacto» y «Telefono».</p>' +
+    '</div>';
+  }
+
   /* Rejection panel: what is wrong, then the format it had to be. */
   function showFormatError(problemas) {
     $('fmt').innerHTML =
@@ -1017,27 +1025,16 @@
             '</ul>' +
           '</div>' +
         '</div>' +
-        '<div class="fmt-body">' +
-          '<h3>Formato esperado</h3>' +
-          '<p>En la primera hoja, una fila con estos 15 encabezados y las entregas debajo. ' +
-            'El orden de las columnas no importa, pero los nombres sí — y no puede faltar ninguna.</p>' +
-          '<div class="tscroll"><table class="fmt-table">' +
-            '<thead><tr><th>Columna</th><th>Tipo de dato</th><th></th><th>Ejemplo</th></tr></thead>' +
-            '<tbody>' + SCHEMA.map(function (s) {
-              return '<tr>' +
-                '<td class="nm">' + esc(s.col) + '</td>' +
-                '<td class="ty">' + TIPO_LABEL[s.tipo] + '</td>' +
-                '<td class="' + (s.req ? 'req">obligatoria' : 'opt">opcional') + '</td>' +
-                '<td class="eg">' + esc(s.ej) + '</td>' +
-              '</tr>';
-            }).join('') + '</tbody>' +
-          '</table></div>' +
-          '<p>Las entregas se cortan en la primera fila sin «N° Transporte». Debajo puede ir ' +
-            'la fila de total y una tabla de contactos con los encabezados ' +
-            '«Nombre del solicitante», «Contacto» y «Telefono».</p>' +
-        '</div>' +
+        formatRefHtml() +
       '</div>';
     $('fmt').hidden = false;
+  }
+
+  /* same reference, asked for on purpose — no alarm styling */
+  function showFormatRef() {
+    $('fmt').innerHTML = '<div class="fmt fmt-plain">' + formatRefHtml() + '</div>';
+    $('fmt').hidden = false;
+    $('fmt').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   }
   function clearFormatError() { $('fmt').hidden = true; $('fmt').innerHTML = ''; }
 
@@ -1049,12 +1046,9 @@
     $('summary').innerHTML = '';
     $('file').value = '';
     clearFormatError();
+    $('intro').hidden = false;
     if (quiet) { clearSay(); return; }
-    say('Listo para otro archivo. Soltá el Excel o el PDF arriba, o', null,
-        'cargá el ejemplo', function () {
-          render(sampleDoc());
-          say('Ejemplo cargado desde «Modelo hoja de ruta.xlsx».');
-        });
+    say('Listo para otro archivo.');
   }
 
   /* ── file intake ─────────────────────────────────────────────────── */
@@ -1162,9 +1156,12 @@
 
   $('clear').addEventListener('click', function () { reset(false); });
 
-  /* open in a working state so the tool shows what it does */
-  render(sampleDoc());
-  say('Ejemplo cargado desde «Modelo hoja de ruta.xlsx». Soltá tu archivo arriba para reemplazarlo.');
+  $('verFormato').addEventListener('click', function () {
+    if ($('fmt').hidden) showFormatRef(); else clearFormatError();
+  });
+
+  /* Opens empty: this page is public, so it carries no real route sheet. */
+  reset(true);
 
   /* inside the Claude viewer the host handles saves; on the web, the blob path does */
   if (window.claude && window.claude.use) {
