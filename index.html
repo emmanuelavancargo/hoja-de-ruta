@@ -225,6 +225,53 @@
     margin: 4px 0 -6px;
   }
 
+  /* ---- format rejection ---- */
+  .fmt {
+    background: var(--surface);
+    border: 1px solid color-mix(in srgb, var(--danger) 45%, var(--line));
+    border-radius: 12px; overflow: hidden; box-shadow: var(--shadow);
+  }
+  .fmt-head {
+    display: flex; gap: 13px; align-items: flex-start;
+    padding: 16px 18px;
+    background: color-mix(in srgb, var(--danger) 11%, var(--surface));
+    border-bottom: 1px solid color-mix(in srgb, var(--danger) 28%, var(--line));
+  }
+  .fmt-mark {
+    flex-shrink: 0; width: 24px; height: 24px; border-radius: 50%;
+    background: var(--danger); color: #1A0A0D;
+    font-family: 'Archivo', sans-serif; font-weight: 700; font-size: 15px;
+    display: grid; place-items: center;
+  }
+  .fmt-head b {
+    font-family: 'Archivo', sans-serif; font-weight: 600; font-size: 16px;
+    color: var(--danger); display: block;
+  }
+  .fmt-why { margin: 9px 0 0; padding-left: 18px; color: var(--ink); font-size: 14px; }
+  .fmt-why li { margin-bottom: 4px; }
+  .fmt-why li::marker { color: var(--danger); }
+
+  .fmt-body { padding: 16px 18px; }
+  .fmt-body h3 {
+    font-family: 'Archivo', sans-serif; font-weight: 600; font-size: 11.5px;
+    letter-spacing: .08em; text-transform: uppercase; color: var(--ink-faint);
+    margin: 0 0 4px;
+  }
+  .fmt-body p { margin: 0 0 12px; font-size: 13.5px; color: var(--ink-soft); }
+  .fmt-body p:last-child { margin-bottom: 0; margin-top: 12px; }
+  .fmt-table { font-size: 13px; }
+  .fmt-table td.req {
+    font-family: 'IBM Plex Mono', monospace; font-size: 11px;
+    color: var(--accent); white-space: nowrap;
+  }
+  .fmt-table td.opt {
+    font-family: 'IBM Plex Mono', monospace; font-size: 11px;
+    color: var(--ink-faint); white-space: nowrap;
+  }
+  .fmt-table td.eg { color: var(--ink-faint); font-size: 12.5px; }
+  .fmt-table td.nm { color: var(--ink); white-space: nowrap; }
+  .fmt-table td.ty { color: var(--ink-soft); white-space: nowrap; font-size: 12.5px; }
+
   @media (prefers-reduced-motion: reduce) {
     * { transition: none !important; animation: none !important; }
   }
@@ -257,6 +304,7 @@
   </div>
 
   <div id="msg" hidden></div>
+  <div id="fmt" hidden></div>
 
   <div id="loaded" hidden style="display:flex;flex-direction:column;gap:20px">
     <dl class="summary" id="summary"></dl>
@@ -274,14 +322,50 @@
 (function () {
   'use strict';
 
-  /* ── canonical schema — fixed columns, variable rows ─────────────── */
-  var COLS = ['N° Transporte','Entrega','Solicitante','Nombre del solicitante',
-    'Nombre Pagador','Descripción Material','Descripción Calibre','Cantidad entrega',
-    'Banda','Nombre Centro','Provincia','Población','Dirección','Lote','Creado por'];
-  var KEYS = ['transporte','entrega','solicitante','nombre','pagador','material',
-    'calibre','cantidad','banda','centro','provincia','poblacion','direccion','lote','creadoPor'];
+  /* ── canonical schema — fixed columns, variable rows ─────────────────
+     One source of truth: the reader validates against it, the writers
+     emit it, and the format-error panel documents it to the user.
+     tipo: 'num' must parse as a number · 'cod' is a code (text or number)
+     req:  the row is rejected when this cell is empty                   */
+  var SCHEMA = [
+    { col: 'N° Transporte',          key: 'transporte',  tipo: 'cod',  req: true,  ej: '200024835' },
+    { col: 'Entrega',                key: 'entrega',     tipo: 'cod',  req: true,  ej: '80134467' },
+    { col: 'Solicitante',            key: 'solicitante', tipo: 'cod',  req: false, ej: '2322587552' },
+    { col: 'Nombre del solicitante', key: 'nombre',      tipo: 'txt',  req: true,  ej: 'NAVEYRA JUAN MARIO' },
+    { col: 'Nombre Pagador',         key: 'pagador',     tipo: 'txt',  req: false, ej: 'FERLEA GANADERA SA' },
+    { col: 'Descripción Material',   key: 'material',    tipo: 'txt',  req: true,  ej: 'SEM. MAIZ DUO 225 PWUE' },
+    { col: 'Descripción Calibre',    key: 'calibre',     tipo: 'txt',  req: false, ej: 'R16' },
+    { col: 'Cantidad entrega',       key: 'cantidad',    tipo: 'num',  req: true,  ej: '10' },
+    { col: 'Banda',                  key: 'banda',       tipo: 'txt',  req: false, ej: 'B2' },
+    { col: 'Nombre Centro',          key: 'centro',      tipo: 'txt',  req: false, ej: 'P051-Gamadel S.A.' },
+    { col: 'Provincia',              key: 'provincia',   tipo: 'txt',  req: false, ej: 'Buenos Aires' },
+    { col: 'Población',              key: 'poblacion',   tipo: 'txt',  req: true,  ej: 'Coronel Vidal' },
+    { col: 'Dirección',              key: 'direccion',   tipo: 'txt',  req: false, ej: 'CALLE 16 879' },
+    { col: 'Lote',                   key: 'lote',        tipo: 'txt',  req: false, ej: 'puede ir vacío' },
+    { col: 'Creado por',             key: 'creadoPor',   tipo: 'txt',  req: false, ej: 'RCASTANARES' }
+  ];
+  var COLS = SCHEMA.map(function (s) { return s.col; });
+  var KEYS = SCHEMA.map(function (s) { return s.key; });
+
+  var TIPO_LABEL = { num: 'Número', cod: 'Texto o número', txt: 'Texto' };
 
   var MARK = '%%HDR1:';
+
+  /* Compare headers on meaning, not bytes: Excel exports vary between
+     °/º, stray accents, double spaces and trailing blanks. */
+  function normHeader(s) {
+    var t = String(s == null ? '' : s).trim().toLowerCase();
+    if (t.normalize) t = t.normalize('NFD').replace(/[̀-ͯ]/g, '');
+    return t.replace(/[°º.:]/g, '').replace(/\s+/g, ' ').trim();
+  }
+
+  /* carries the list of problems so the UI can lay them out */
+  function FormatError(problemas) {
+    this.name = 'FormatError';
+    this.problemas = problemas;
+    this.message = problemas.join(' · ');
+  }
+  FormatError.prototype = Object.create(Error.prototype);
 
   /* ── sample: the model route sheet ───────────────────────────────── */
   var S_ROWS = [
@@ -384,46 +468,124 @@
     return doc.rows.reduce(function (a, r) { return a + num(r.cantidad); }, 0);
   }
 
-  /* ── read Excel ──────────────────────────────────────────────────── */
+  /* ── read Excel ──────────────────────────────────────────────────────
+     Strict on purpose: columns are matched by NAME, never by position,
+     so a foreign sheet is rejected instead of silently mapped onto the
+     schema. Every rejection names what is wrong.                       */
   function readXlsx(buf) {
-    var wb = XLSX.read(buf, { type: 'array' });
-    var ws = wb.Sheets[wb.SheetNames[0]];
-    var grid = XLSX.utils.sheet_to_json(ws, { header: 1, blankrows: true, defval: '' });
-
-    /* locate the header row by its first column */
-    var hdr = -1;
-    for (var i = 0; i < grid.length && i < 20; i++) {
-      var c0 = txt(grid[i][0]).toLowerCase();
-      if (c0.indexOf('transporte') > -1) { hdr = i; break; }
+    var wb, ws, grid;
+    try {
+      wb = XLSX.read(buf, { type: 'array' });
+      ws = wb.Sheets[wb.SheetNames[0]];
+      grid = XLSX.utils.sheet_to_json(ws, { header: 1, blankrows: true, defval: '' });
+    } catch (e) {
+      throw new FormatError(['No pude abrir el archivo. ¿Es un .xlsx válido?']);
     }
-    if (hdr === -1) hdr = 0;
+    if (!ws || !grid.length) throw new FormatError(['La primera hoja del archivo está vacía.']);
 
-    /* data rows run until N° Transporte goes blank */
-    var rows = [], r, i2;
-    for (i2 = hdr + 1; i2 < grid.length; i2++) {
-      if (!txt(grid[i2][0])) break;
-      r = {};
-      KEYS.forEach(function (k, ci) { r[k] = txt(grid[i2][ci]); });
-      r.cantidad = num(grid[i2][7]);
+    var wanted = {};
+    SCHEMA.forEach(function (s) { wanted[normHeader(s.col)] = s; });
+
+    /* the header row is whichever of the first rows matches the most
+       known column names — tolerates a logo band or title block above */
+    var hdr = -1, best = 0, i;
+    for (i = 0; i < grid.length && i < 30; i++) {
+      var hits = 0, seen = {};
+      (grid[i] || []).forEach(function (cell) {
+        var n = normHeader(cell);
+        if (n && wanted[n] && !seen[n]) { seen[n] = 1; hits++; }
+      });
+      if (hits > best) { best = hits; hdr = i; }
+    }
+    if (hdr === -1 || best < 4) {
+      throw new FormatError([
+        'No encontré la fila de encabezados de la hoja de ruta en las primeras 30 filas de la primera hoja.'
+      ]);
+    }
+
+    /* column name -> index */
+    var at = {}, dupes = [];
+    (grid[hdr] || []).forEach(function (cell, ci) {
+      var n = normHeader(cell);
+      if (!wanted[n]) return;
+      if (at[n] !== undefined) dupes.push(wanted[n].col); else at[n] = ci;
+    });
+
+    var faltan = SCHEMA.filter(function (s) { return at[normHeader(s.col)] === undefined; });
+    if (faltan.length || dupes.length) {
+      var p = [];
+      if (faltan.length) {
+        p.push((faltan.length === 1 ? 'Falta la columna ' : 'Faltan ' + faltan.length + ' columnas: ') +
+               faltan.map(function (s) { return '«' + s.col + '»'; }).join(', ') + '.');
+      }
+      if (dupes.length) {
+        p.push('Hay columnas repetidas: ' +
+               dupes.map(function (c) { return '«' + c + '»'; }).join(', ') + '.');
+      }
+      throw new FormatError(p);
+    }
+
+    var idx = {};
+    SCHEMA.forEach(function (s) { idx[s.key] = at[normHeader(s.col)]; });
+    var getCell = function (row, key) { return txt((row || [])[idx[key]]); };
+
+    /* data runs from under the header until N° Transporte goes blank */
+    var rows = [], malCant = [], vacios = {}, end;
+    for (end = hdr + 1; end < grid.length; end++) {
+      if (!getCell(grid[end], 'transporte')) break;
+
+      var r = {}, excelRow = end + 1;
+      KEYS.forEach(function (k) { r[k] = getCell(grid[end], k); });
+
+      var raw = r.cantidad;
+      if (raw === '' || !isFinite(parseFloat(String(raw).replace(',', '.')))) {
+        if (malCant.length < 6) malCant.push(excelRow + ' ("' + (raw || 'vacío') + '")');
+      }
+      r.cantidad = num(raw);
+
+      SCHEMA.forEach(function (s) {
+        if (s.req && s.key !== 'cantidad' && !r[s.key]) {
+          (vacios[s.col] = vacios[s.col] || []).push(excelRow);
+        }
+      });
       rows.push(r);
     }
-    if (!rows.length) throw new Error('No encontré filas de entregas en la planilla.');
+
+    if (!rows.length) {
+      throw new FormatError([
+        'Encontré los encabezados en la fila ' + (hdr + 1) +
+        ', pero no hay ninguna fila de entrega debajo con «N° Transporte» cargado.'
+      ]);
+    }
+
+    var probs = [];
+    if (malCant.length) {
+      probs.push('«Cantidad entrega» tiene que ser un número. No lo es en ' +
+        (malCant.length === 1 ? 'la fila ' : 'las filas ') + malCant.join(', ') + '.');
+    }
+    Object.keys(vacios).forEach(function (colName) {
+      var f = vacios[colName];
+      probs.push('«' + colName + '» no puede ir vacía. Está vacía en ' +
+        (f.length === 1 ? 'la fila ' : 'las filas ') +
+        f.slice(0, 6).join(', ') + (f.length > 6 ? ' y ' + (f.length - 6) + ' más' : '') + '.');
+    });
+    if (probs.length) throw new FormatError(probs);
 
     /* contacts table: the row carrying a "Contacto" header, then its rows */
-    var contactos = [], ch = -1, j, k2, cells;
-    for (j = i2; j < grid.length; j++) {
-      cells = (grid[j] || []).map(function (v) { return txt(v).toLowerCase(); });
-      if (cells.indexOf('contacto') > -1) { ch = j; break; }
+    var contactos = [], ch = -1, j;
+    for (j = end; j < grid.length; j++) {
+      if ((grid[j] || []).some(function (v) { return normHeader(v) === 'contacto'; })) { ch = j; break; }
     }
     if (ch > -1) {
-      var base = (grid[ch] || []).findIndex(function (v) { return txt(v).toLowerCase() === 'contacto'; }) - 1;
+      var base = 0;
+      (grid[ch] || []).forEach(function (v, ci) { if (normHeader(v) === 'contacto') base = ci - 1; });
       if (base < 0) base = 0;
-      for (k2 = ch + 1; k2 < grid.length; k2++) {
-        var nm = txt((grid[k2] || [])[base]);
+      for (j = ch + 1; j < grid.length; j++) {
+        var nm = txt((grid[j] || [])[base]);
         if (!nm) continue;
         contactos.push({ nombre: nm,
-          contacto: txt((grid[k2] || [])[base + 1]),
-          telefono: txt((grid[k2] || [])[base + 2]) });
+          contacto: txt((grid[j] || [])[base + 1]),
+          telefono: txt((grid[j] || [])[base + 2]) });
       }
     }
     return { rows: rows, contactos: contactos, origen: 'excel' };
@@ -437,10 +599,19 @@
     }
     var m = s.match(/%%HDR1:([A-Za-z0-9+/=]+)/);
     if (!m) {
-      throw new Error('Este PDF no lo generó esta app, así que no trae los datos embebidos. ' +
-                      'Convertí primero el Excel a PDF acá y ese PDF sí vuelve a Excel.');
+      throw new FormatError([
+        'Este PDF no lo generó esta app, así que no trae los datos embebidos.',
+        'Solo se puede volver al Excel desde un PDF descargado desde acá: al generarlo, ' +
+        'la planilla de origen viaja dentro del archivo.'
+      ]);
     }
-    var doc = JSON.parse(b64decode(m[1]));
+    var doc;
+    try { doc = JSON.parse(b64decode(m[1])); }
+    catch (e) { throw new FormatError(['El PDF trae los datos embebidos pero están dañados.']); }
+    if (!doc || !doc.rows || !doc.rows.length) {
+      throw new FormatError(['El PDF no trae ninguna fila de entrega.']);
+    }
+    doc.contactos = doc.contactos || [];
     doc.origen = 'pdf';
     return doc;
   }
@@ -833,6 +1004,43 @@
   }
   function clearSay() { $('msg').hidden = true; }
 
+  /* Rejection panel: what is wrong, then the format it had to be. */
+  function showFormatError(problemas) {
+    $('fmt').innerHTML =
+      '<div class="fmt">' +
+        '<div class="fmt-head">' +
+          '<div class="fmt-mark">!</div>' +
+          '<div style="flex:1;min-width:0">' +
+            '<b>No puedo procesar este archivo</b>' +
+            '<ul class="fmt-why">' +
+              problemas.map(function (p) { return '<li>' + esc(p) + '</li>'; }).join('') +
+            '</ul>' +
+          '</div>' +
+        '</div>' +
+        '<div class="fmt-body">' +
+          '<h3>Formato esperado</h3>' +
+          '<p>En la primera hoja, una fila con estos 15 encabezados y las entregas debajo. ' +
+            'El orden de las columnas no importa, pero los nombres sí — y no puede faltar ninguna.</p>' +
+          '<div class="tscroll"><table class="fmt-table">' +
+            '<thead><tr><th>Columna</th><th>Tipo de dato</th><th></th><th>Ejemplo</th></tr></thead>' +
+            '<tbody>' + SCHEMA.map(function (s) {
+              return '<tr>' +
+                '<td class="nm">' + esc(s.col) + '</td>' +
+                '<td class="ty">' + TIPO_LABEL[s.tipo] + '</td>' +
+                '<td class="' + (s.req ? 'req">obligatoria' : 'opt">opcional') + '</td>' +
+                '<td class="eg">' + esc(s.ej) + '</td>' +
+              '</tr>';
+            }).join('') + '</tbody>' +
+          '</table></div>' +
+          '<p>Las entregas se cortan en la primera fila sin «N° Transporte». Debajo puede ir ' +
+            'la fila de total y una tabla de contactos con los encabezados ' +
+            '«Nombre del solicitante», «Contacto» y «Telefono».</p>' +
+        '</div>' +
+      '</div>';
+    $('fmt').hidden = false;
+  }
+  function clearFormatError() { $('fmt').hidden = true; $('fmt').innerHTML = ''; }
+
   /* wipe the loaded route sheet so another file can be run through */
   function reset(quiet) {
     current = null;
@@ -840,6 +1048,7 @@
     $('stops').innerHTML = '';
     $('summary').innerHTML = '';
     $('file').value = '';
+    clearFormatError();
     if (quiet) { clearSay(); return; }
     say('Listo para otro archivo. Soltá el Excel o el PDF arriba, o', null,
         'cargá el ejemplo', function () {
@@ -852,17 +1061,30 @@
   function handleFile(f) {
     if (!f) return;
     clearSay();
+    clearFormatError();
+
+    if (!/\.(xlsx|xls|pdf)$/i.test(f.name)) {
+      reset(true);
+      showFormatError(['«' + f.name + '» no es un archivo .xlsx ni .pdf.']);
+      return;
+    }
+
     var isPdf = /\.pdf$/i.test(f.name);
     var reader = new FileReader();
     reader.onload = function () {
+      var doc;
       try {
-        var doc = isPdf ? readPdf(reader.result) : readXlsx(reader.result);
-        doc.filename = f.name.replace(/\.(xlsx|xls|pdf)$/i, '');
-        render(doc);
-        say('Cargué ' + doc.rows.length + ' líneas desde ' + f.name + '.', 'ok');
+        doc = isPdf ? readPdf(reader.result) : readXlsx(reader.result);
       } catch (e) {
-        say(e.message || 'No pude leer el archivo.', 'err');
+        /* a rejected file must not leave the previous one on screen */
+        reset(true);
+        if (e && e.problemas) showFormatError(e.problemas);
+        else say(e && e.message ? e.message : 'No pude leer el archivo.', 'err');
+        return;
       }
+      doc.filename = f.name.replace(/\.(xlsx|xls|pdf)$/i, '');
+      render(doc);
+      say('Cargué ' + doc.rows.length + ' líneas desde ' + f.name + '.', 'ok');
     };
     reader.onerror = function () { say('No pude leer el archivo.', 'err'); };
     reader.readAsArrayBuffer(f);
