@@ -375,7 +375,9 @@
     { col: 'Población',              key: 'poblacion',   tipo: 'txt',  req: true,  ej: 'Coronel Vidal' },
     { col: 'Dirección',              key: 'direccion',   tipo: 'txt',  req: false, ej: 'Calle y altura, o lat/long' },
     { col: 'Lote',                   key: 'lote',        tipo: 'txt',  req: false, ej: 'puede ir vacío' },
-    { col: 'Creado por',             key: 'creadoPor',   tipo: 'txt',  req: false, ej: 'Usuario que generó la planilla' }
+    { col: 'Creado por',             key: 'creadoPor',   tipo: 'txt',  req: false, ej: 'Usuario que generó la planilla' },
+    { col: 'Teléfono Contacto',      key: 'contactoTel', tipo: 'cod',  req: false, ej: '2235 00-0000' },
+    { col: 'Nombre de Contacto',     key: 'contactoNom', tipo: 'txt',  req: false, ej: 'Persona que recibe' }
   ];
   var COLS = SCHEMA.map(function (s) { return s.col; });
   var KEYS = SCHEMA.map(function (s) { return s.key; });
@@ -438,11 +440,20 @@
       byKey[key].items.push(r);
       byKey[key].total += num(r.cantidad);
     });
+    /* Contact comes per row now. The table at the foot of the sheet is
+       only a fallback, for files that predate those two columns. */
+    var firstOf = function (items, key) {
+      for (var i = 0; i < items.length; i++) {
+        var v = txt(items[i][key]);
+        if (v) return v;
+      }
+      return '';
+    };
     return order.map(function (k) {
       var s = byKey[k];
       var c = (doc.contactos || []).filter(function (x) { return txt(x.nombre) === txt(s.nombre); })[0];
-      s.contacto = c ? c.contacto : '';
-      s.telefono = c ? c.telefono : '';
+      s.contacto = firstOf(s.items, 'contactoNom') || (c ? txt(c.contacto) : '');
+      s.telefono = firstOf(s.items, 'contactoTel') || (c ? txt(c.telefono) : '');
       return s;
     });
   }
@@ -615,7 +626,7 @@
       pageSetup: { orientation: 'landscape', fitToPage: true, fitToWidth: 1, fitToHeight: 0 }
     });
 
-    ws.columns = [12,11,12,32,32,42,10,11,8,20,15,16,34,10,14].map(function (w) {
+    ws.columns = [12,11,12,32,32,42,10,11,8,20,15,16,34,10,14,16,24].map(function (w) {
       return { width: w };
     });
 

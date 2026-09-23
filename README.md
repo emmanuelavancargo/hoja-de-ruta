@@ -25,27 +25,37 @@ Por eso la vuelta PDF → Excel es exacta y no depende de extraer texto de la p�
 
 ## Esquema de la planilla
 
-Las 15 columnas son fijas; varía la cantidad de filas.
+Las 17 columnas son fijas; varía la cantidad de filas.
 
-| # | Columna |
-|---|---|
-| 1 | N° Transporte |
-| 2 | Entrega |
-| 3 | Solicitante |
-| 4 | Nombre del solicitante |
-| 5 | Nombre Pagador |
-| 6 | Descripción Material |
-| 7 | Descripción Calibre |
-| 8 | Cantidad entrega |
-| 9 | Banda |
-| 10 | Nombre Centro |
-| 11 | Provincia |
-| 12 | Población |
-| 13 | Dirección |
-| 14 | Lote |
-| 15 | Creado por |
+| # | Columna | Tipo | Obligatoria |
+|---|---|---|---|
+| 1 | N° Transporte | Texto o número | sí |
+| 2 | Entrega | Texto o número | sí |
+| 3 | Solicitante | Texto o número | no |
+| 4 | Nombre del solicitante | Texto | sí |
+| 5 | Nombre Pagador | Texto | no |
+| 6 | Descripción Material | Texto | sí |
+| 7 | Descripción Calibre | Texto | no |
+| 8 | Cantidad entrega | **Número** | sí |
+| 9 | Banda | Texto | no |
+| 10 | Nombre Centro | Texto | no |
+| 11 | Provincia | Texto | no |
+| 12 | Población | Texto | sí |
+| 13 | Dirección | Texto | no |
+| 14 | Lote | Texto | no |
+| 15 | Creado por | Texto | no |
+| 16 | Teléfono Contacto | Texto o número | no |
+| 17 | Nombre de Contacto | Texto | no |
 
-Debajo de la tabla van una fila de total y una tabla de contactos (`Nombre del solicitante` · `Contacto` · `Telefono`).
+«Obligatoria» aplica a la celda: la columna siempre tiene que existir, pero solo esas no pueden quedar vacías.
+
+Las entregas se cortan en la primera fila sin `N° Transporte`. Debajo puede ir una fila de total y una tabla de contactos (`Nombre del solicitante` · `Contacto` · `Telefono`), que se usa como respaldo para archivos anteriores a las columnas 16 y 17.
+
+## Validación
+
+Las columnas se buscan **por nombre**, nunca por posición, así que el orden no importa y una planilla ajena se rechaza en vez de mapearse mal en silencio. Los encabezados se comparan normalizados: tolera `°` vs `º`, acentos, mayúsculas, espacios dobles y dos puntos al final.
+
+Se rechaza el archivo, nombrando el problema, cuando: no aparece la fila de encabezados, falta o se repite alguna de las 17 columnas, `Cantidad entrega` no es numérica, o una celda obligatoria está vacía.
 
 El lector busca la fila de encabezados en vez de asumir que está en la fila 1, así que tolera que el archivo arranque con una banda de logo.
 
