@@ -299,6 +299,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pako/2.1.0/pako.min.js"></script>
 </head>
 <body>
 <div class="wrap">
@@ -585,13 +586,69 @@
     return { rows: rows, contactos: contactos, origen: 'excel' };
   }
 
-  /* ── read PDF (payload parked after %%EOF) ───────────────────────── */
-  function readPdf(buf) {
-    var bytes = new Uint8Array(buf), s = '', CH = 0x8000;
+  /* ── read PDF ────────────────────────────────────────────────────────
+     Two payload formats, newest first:
+       H2 — chunks of invisible text inside the page content. Survives a
+            server re-saving the file, which is what happens when the PDF
+            is uploaded to a platform and downloaded again.
+       %%HDR1 — a tail parked past %%EOF. Any re-save drops it, so it is
+            only read now, never written, for files already in circulation.
+     A re-save may also deflate the content streams, so when a plain scan
+     finds nothing, inflate what looks like a stream and scan that too.   */
+  function latin1(bytes) {
+    var s = '', CH = 0x8000;
     for (var i = 0; i < bytes.length; i += CH) {
       s += String.fromCharCode.apply(null, bytes.subarray(i, i + CH));
     }
-    var m = s.match(/%%HDR1:([A-Za-z0-9+/=]+)/);
+    return s;
+  }
+
+  function collectChunks(s) {
+    var re = /H2#(\d{4})#([A-Za-z0-9+/=]*)#/g, parts = [], m;
+    while ((m = re.exec(s))) parts.push([parseInt(m[1], 10), m[2]]);
+    if (!parts.length) return null;
+    parts.sort(function (a, b) { return a[0] - b[0]; });
+    var out = '', seen = {};
+    for (var i = 0; i < parts.length; i++) {
+      if (seen[parts[i][0]]) continue;      /* a chunk can appear twice */
+      seen[parts[i][0]] = 1;
+      out += parts[i][1];
+    }
+    return out;
+  }
+
+  function findPayload(bytes) {
+    var s = latin1(bytes);
+    var hit = collectChunks(s);
+    if (hit) return hit;
+
+    if (typeof pako !== 'undefined') {
+      var re = /stream\r?\n/g, m;
+      while ((m = re.exec(s))) {
+        /* "endstream" contains "stream" — skip those or the bounds shift */
+        if (m.index >= 3 && s.substr(m.index - 3, 3) === 'end') continue;
+
+        var a = m.index + m[0].length, b = s.indexOf('endstream', a);
+        if (b < 0) continue;
+        while (b > a && (s.charCodeAt(b - 1) === 10 || s.charCodeAt(b - 1) === 13)) b--;
+
+        var slice = bytes.subarray(a, b), inf = null;
+        try { inf = pako.inflate(slice); }
+        catch (e) { try { inf = pako.inflateRaw(slice); } catch (e2) { inf = null; } }
+        if (!inf) continue;
+
+        hit = collectChunks(latin1(inf));
+        if (hit) return hit;
+      }
+    }
+
+    var legacy = s.match(/%%HDR1:([A-Za-z0-9+/=]+)/);
+    return legacy ? legacy[1] : null;
+  }
+
+  function readPdf(buf) {
+    var b64 = findPayload(new Uint8Array(buf));
+    var m = b64 ? [null, b64] : null;
     if (!m) {
       throw new FormatError([
         'Este PDF no lo generó esta app, así que no trae los datos embebidos.',
@@ -889,14 +946,21 @@
              W - M, d.internal.pageSize.getHeight() - 6, { align: 'right' });
     }
 
-    /* ---- park the source data past %%EOF so the PDF round-trips ---- */
-    var pdfBytes = new Uint8Array(d.output('arraybuffer'));
-    var tail = new TextEncoder().encode('\n' + MARK +
-      b64encode(JSON.stringify({ rows: doc.rows, contactos: doc.contactos || [] })) + '\n');
-    var out = new Uint8Array(pdfBytes.length + tail.length);
-    out.set(pdfBytes, 0);
-    out.set(tail, pdfBytes.length);
-    return out;
+    /* ---- carry the source data inside the page, as invisible text ------
+       It has to live in the page content: a payload parked past %%EOF is
+       dropped the moment any server reads and rewrites the file, which is
+       exactly what happens when this PDF is uploaded to a platform and
+       downloaded again from there. Invisible text rides along with what
+       is drawn, so it survives that trip.                                */
+    var b64 = b64encode(JSON.stringify({ rows: doc.rows, contactos: doc.contactos || [] }));
+    d.setPage(pages);
+    d.setFontSize(1).setTextColor(255, 255, 255);
+    for (var c = 0, n = 0; c < b64.length; c += 800, n++) {
+      d.text('H2#' + ('000' + n).slice(-4) + '#' + b64.substr(c, 800) + '#',
+             1, pageH - 1, { renderingMode: 'invisible' });
+    }
+
+    return new Uint8Array(d.output('arraybuffer'));
   }
 
   /* band occupies bandTop .. bandTop + 13; the table starts at bandTop + 15 */
