@@ -646,16 +646,292 @@
     return legacy ? legacy[1] : null;
   }
 
+  /* ── reading the printed page ────────────────────────────────────────
+     Last resort when no payload survives: read the route sheet back off
+     the page itself. Everything the document prints comes back; the three
+     columns it never prints cannot, and the caller says so.             */
+
+  var BSLASH = String.fromCharCode(92);
+  var WINANSI = { 0x80:'€',0x82:'‚',0x83:'ƒ',0x84:'„',0x85:'…',
+    0x86:'†',0x87:'‡',0x88:'ˆ',0x89:'‰',0x8A:'Š',0x8B:'‹',
+    0x8C:'Œ',0x8E:'Ž',0x91:'‘',0x92:'’',0x93:'“',0x94:'”',
+    0x95:'•',0x96:'–',0x97:'—',0x98:'˜',0x99:'™',0x9A:'š',
+    0x9B:'›',0x9C:'œ',0x9E:'ž',0x9F:'Ÿ' };
+
+  function decodePdfString(raw) {
+    var out = '', i = 0, esc = { n:'\n', r:'\r', t:'\t', b:'\b', f:'\f' };
+    while (i < raw.length) {
+      var c = raw.charAt(i);
+      if (c === BSLASH) {
+        var n = raw.charAt(i + 1);
+        if (n >= '0' && n <= '7') {
+          var oct = raw.substr(i + 1, 3).match(/^[0-7]{1,3}/)[0];
+          out += String.fromCharCode(parseInt(oct, 8));
+          i += 1 + oct.length; continue;
+        }
+        out += (esc[n] !== undefined ? esc[n] : n); i += 2; continue;
+      }
+      out += c; i++;
+    }
+    return out.replace(/[\x80-\x9F]/g, function (ch) {
+      return WINANSI[ch.charCodeAt(0)] || ch;
+    });
+  }
+
+  function objectIndex(s) {
+    var map = {}, re = /(\d+)\s+0\s+obj\b/g, m;
+    while ((m = re.exec(s))) {
+      var start = m.index + m[0].length, end = s.indexOf('endobj', start);
+      map[m[1]] = { start: start, end: end < 0 ? s.length : end };
+    }
+    return map;
+  }
+
+  function refsIn(str) {
+    var out = [], re = /(\d+)\s+0\s+R/g, m;
+    while ((m = re.exec(str))) out.push(m[1]);
+    return out;
+  }
+
+  function streamOf(bytes, s, obj) {
+    var head = s.slice(obj.start, obj.end), sm = head.match(/stream\r?\n/);
+    if (!sm) return null;
+    var a = obj.start + sm.index + sm[0].length, b = s.indexOf('endstream', a);
+    if (b < 0 || b > obj.end) return null;
+    while (b > a && (s.charCodeAt(b - 1) === 10 || s.charCodeAt(b - 1) === 13)) b--;
+    var slice = bytes.subarray(a, b);
+    if (typeof pako === 'undefined') return latin1(slice);
+    try { return latin1(pako.inflate(slice)); }
+    catch (e) {
+      try { return latin1(pako.inflateRaw(slice)); } catch (e2) { return latin1(slice); }
+    }
+  }
+
+  /* One content string per page, in page order. A rebuilt PDF can split a
+     page across many streams, and file order is not page order, so follow
+     the catalog: /Pages -> /Kids -> each page's /Contents. */
+  function pageStreams(bytes) {
+    var s = latin1(bytes), objs = objectIndex(s), order = [], seen = {};
+
+    var root = null, cat = s.match(/\/Type\s*\/Catalog[\s\S]{0,400}?\/Pages\s+(\d+)\s+0\s+R/);
+    if (cat) root = cat[1];
+    else Object.keys(objs).forEach(function (n) {
+      if (!root && /\/Type\s*\/Pages/.test(s.slice(objs[n].start, objs[n].end))) root = n;
+    });
+
+    (function walk(num, depth) {
+      if (depth > 8 || !num || seen[num] || !objs[num]) return;
+      seen[num] = 1;
+      var body = s.slice(objs[num].start, objs[num].end);
+      if (/\/Type\s*\/Pages/.test(body)) {
+        var k = body.match(/\/Kids\s*\[([\s\S]*?)\]/);
+        if (k) refsIn(k[1]).forEach(function (n) { walk(n, depth + 1); });
+      } else if (/\/Type\s*\/Page\b/.test(body)) order.push(num);
+    })(root, 0);
+
+    if (!order.length) {
+      Object.keys(objs).forEach(function (n) {
+        var body = s.slice(objs[n].start, objs[n].end);
+        if (/\/Type\s*\/Page\b/.test(body) && !/\/Type\s*\/Pages/.test(body)) order.push(n);
+      });
+    }
+
+    return order.map(function (num) {
+      var body = s.slice(objs[num].start, objs[num].end);
+      var c = body.match(/\/Contents\s*(\[[^\]]*\]|\d+\s+0\s+R)/);
+      if (!c) return '';
+      return refsIn(c[1]).map(function (n) {
+        return objs[n] ? (streamOf(bytes, s, objs[n]) || '') : '';
+      }).join('\n');
+    }).filter(function (t) { return t.indexOf('BT') > -1; });
+  }
+
+  /* {page, x, y, t} for every drawn string */
+  function tokenize(streams) {
+    var items = [];
+    var STR = '\\(((?:' + BSLASH + BSLASH + '.|[^' + BSLASH + BSLASH + '()])*)\\)';
+    streams.forEach(function (cs, page) {
+      var re = new RegExp(
+        '(-?[\\d.]+)\\s+(-?[\\d.]+)\\s+(?:Td|TD)' +
+        '|(?:[-\\d.]+\\s+){4}(-?[\\d.]+)\\s+(-?[\\d.]+)\\s+Tm' +
+        '|' + STR + '\\s*Tj' +
+        '|\\[([^\\]]*)\\]\\s*TJ', 'g');
+      var m, x = 0, y = 0;
+      while ((m = re.exec(cs))) {
+        if (m[1] !== undefined)      { x = parseFloat(m[1]); y = parseFloat(m[2]); }
+        else if (m[3] !== undefined) { x = parseFloat(m[3]); y = parseFloat(m[4]); }
+        else if (m[5] !== undefined) {
+          var t = decodePdfString(m[5]).trim();
+          if (t) items.push({ page: page, x: x, y: y, t: t });
+        } else if (m[6] !== undefined) {
+          var joined = '', p = new RegExp(STR, 'g'), q;
+          while ((q = p.exec(m[6]))) joined += decodePdfString(q[1]);
+          joined = joined.trim();
+          if (joined) items.push({ page: page, x: x, y: y, t: joined });
+        }
+      }
+    });
+    return items;
+  }
+
+  /* Cluster into lines by proximity, never fixed buckets: cells of one row
+     sit a fraction of a point apart and a bucket edge would split the row. */
+  function textLines(items) {
+    var byPage = {}, pages = [], out = [];
+    items.forEach(function (it) {
+      if (!byPage[it.page]) { byPage[it.page] = []; pages.push(it.page); }
+      byPage[it.page].push(it);
+    });
+    pages.sort(function (a, b) { return a - b; }).forEach(function (p) {
+      var cur = null;
+      byPage[p].slice().sort(function (a, b) { return b.y - a.y; }).forEach(function (it) {
+        if (!cur || Math.abs(cur.y - it.y) > 2.5) { cur = { page: p, y: it.y, cells: [] }; out.push(cur); }
+        cur.cells.push(it);
+      });
+    });
+    out.forEach(function (l) {
+      l.cells.sort(function (a, b) { return a.x - b.x; });
+      l.text = l.cells.map(function (c) { return c.t; }).join(' ');
+    });
+    return out;
+  }
+
+  var COLKEY = { 'entrega':'entrega', 'pagador':'pagador', 'material':'material',
+                 'calibre':'calibre', 'banda':'banda', 'cant':'cantidad' };
+
+  function splitLugar(s) {
+    var parts = s.split('·'), left = txt(parts[0]), dir = txt(parts.slice(1).join('·'));
+    var bits = left.split(',');
+    return { poblacion: txt(bits[0]), provincia: txt(bits.slice(1).join(',')), direccion: dir };
+  }
+
+  function parseLayout(lines) {
+    var head = {}, stops = [], cur = null, cols = null, i, j, k;
+
+    /* meta strip: labels on one line, values on the one below, same x */
+    for (i = 0; i < lines.length - 1; i++) {
+      if (!lines[i].cells.some(function (c) { return normHeader(c.t) === 'centro'; })) continue;
+      var V = lines[i + 1];
+      lines[i].cells.forEach(function (lab) {
+        var key = normHeader(lab.t);
+        var v = V.cells.filter(function (c) { return Math.abs(c.x - lab.x) < 6; })[0];
+        if (!v) return;
+        if (key === 'centro')    head.centro = v.t;
+        if (key === 'provincia') head.provincia = v.t;
+      });
+      break;
+    }
+
+    /* transporte: the value under its label, else the page footer */
+    for (j = 0; j < lines.length && !head.transporte; j++) {
+      var lab2 = lines[j].cells.filter(function (c) { return /transporte/.test(normHeader(c.t)); })[0];
+      if (!lab2) continue;
+      for (k = j + 1; k < Math.min(j + 4, lines.length); k++) {
+        var v2 = lines[k].cells.filter(function (c) {
+          return /^[\w-]+$/.test(c.t) && Math.abs(c.x - lab2.x) < 60;
+        })[0];
+        if (v2) { head.transporte = v2.t; break; }
+      }
+    }
+    if (!head.transporte) {
+      for (var f = lines.length - 1; f >= 0; f--) {
+        var mf = lines[f].text.match(/^(\S+)\s+·\s+\d{2}\/\d{2}\/\d{4}/);
+        if (mf) { head.transporte = mf[1]; break; }
+      }
+    }
+
+    for (var n = 0; n < lines.length; n++) {
+      var line = lines[n], cells = line.cells;
+
+      /* a stop band carries "N bultos" on the right; x>=60 skips the badge */
+      var bultos = cells.filter(function (c) { return /^[\d.,]+\s*bultos$/i.test(c.t); })[0];
+      var name   = cells.filter(function (c) { return c.x >= 60 && c.x < 200; })[0];
+      if (bultos && name && !/total/i.test(name.t)) {
+        cur = { nombre: name.t, items: [] };
+        stops.push(cur);
+
+        var band = [];
+        for (var b2 = n + 1; b2 < Math.min(n + 4, lines.length); b2++) {
+          if (lines[b2].cells.some(function (c) { return COLKEY[normHeader(c.t)] !== undefined; })) break;
+          band = band.concat(lines[b2].cells);
+        }
+        var loc = band.filter(function (c) { return c.x >= 60 && c.x < 300 && /[,·]/.test(c.t); })[0];
+        var con = band.filter(function (c) { return c.x >= 300; })[0];
+        if (loc) {
+          var L2 = splitLugar(loc.t);
+          cur.poblacion = L2.poblacion; cur.provincia = L2.provincia; cur.direccion = L2.direccion;
+        }
+        if (con) {
+          var cb = con.t.split('·');
+          cur.contactoNom = txt(cb[0]);
+          cur.contactoTel = txt(cb.slice(1).join(' '));
+        }
+        cols = null;
+        continue;
+      }
+
+      /* the table header states where its own columns sit */
+      var named = cells.filter(function (c) { return COLKEY[normHeader(c.t)] !== undefined; });
+      if (named.length >= 4) {
+        cols = named.map(function (c) { return { x: c.x, key: COLKEY[normHeader(c.t)] }; })
+                    .sort(function (a, b) { return a.x - b.x; });
+        continue;
+      }
+
+      if (!cols || !cur) continue;
+      if (/subtot|total general|preparado por/i.test(line.text)) { cols = null; continue; }
+      if (!cells[0] || Math.abs(cells[0].x - cols[0].x) > 8) continue;
+
+      var row = {};
+      cells.forEach(function (c) {
+        var pick = null;
+        for (var q = 0; q < cols.length; q++) if (c.x + 6 >= cols[q].x) pick = cols[q];
+        if (pick) row[pick.key] = (row[pick.key] ? row[pick.key] + ' ' : '') + c.t;
+      });
+      if (row.entrega || row.material) cur.items.push(row);
+    }
+
+    var rows = [];
+    stops.forEach(function (s) {
+      s.items.forEach(function (r) {
+        rows.push({
+          transporte: txt(head.transporte), entrega: txt(r.entrega), solicitante: '',
+          nombre: txt(s.nombre), pagador: txt(r.pagador), material: txt(r.material),
+          calibre: txt(r.calibre),
+          cantidad: parseFloat(String(r.cantidad || '0').replace(/\./g, '').replace(',', '.')) || 0,
+          banda: txt(r.banda), centro: txt(head.centro),
+          provincia: txt(s.provincia) || txt(head.provincia),
+          poblacion: txt(s.poblacion), direccion: txt(s.direccion),
+          lote: '', creadoPor: '',
+          contactoTel: txt(s.contactoTel), contactoNom: txt(s.contactoNom)
+        });
+      });
+    });
+    return { rows: rows, contactos: [] };
+  }
+
+  var SIN_IMPRIMIR = ['Solicitante', 'Lote', 'Creado por'];
+
   function readPdf(buf) {
-    var b64 = findPayload(new Uint8Array(buf));
-    var m = b64 ? [null, b64] : null;
-    if (!m) {
+    var bytes = new Uint8Array(buf);
+    var b64 = findPayload(bytes);
+
+    /* no payload left: rebuild from what the page prints */
+    if (!b64) {
+      var rebuilt = null;
+      try { rebuilt = parseLayout(textLines(tokenize(pageStreams(bytes)))); }
+      catch (e) { rebuilt = null; }
+      if (rebuilt && rebuilt.rows.length) {
+        rebuilt.origen = 'pdf-texto';
+        return rebuilt;
+      }
       throw new FormatError([
-        'Este PDF no lo generó esta app, así que no trae los datos embebidos.',
-        'Solo se puede volver al Excel desde un PDF descargado desde acá: al generarlo, ' +
-        'la planilla de origen viaja dentro del archivo.'
+        'No pude leer una hoja de ruta en este PDF.',
+        'Convertí a PDF desde acá y ese archivo vuelve a Excel sin problema.'
       ]);
     }
+
+    var m = [null, b64];
     var doc;
     try { doc = JSON.parse(b64decode(m[1])); }
     catch (e) { throw new FormatError(['El PDF trae los datos embebidos pero están dañados.']); }
@@ -1153,7 +1429,13 @@
       }
       doc.filename = f.name.replace(/\.(xlsx|xls|pdf)$/i, '');
       render(doc);
-      say('Cargué ' + doc.rows.length + ' líneas desde ' + f.name + '.', 'ok');
+      if (doc.origen === 'pdf-texto') {
+        say('Cargué ' + doc.rows.length + ' líneas leyendo el contenido impreso: este PDF ' +
+            'ya no traía los datos embebidos. Vuelve todo lo que el documento muestra, pero ' +
+            SIN_IMPRIMIR.join(', ') + ' no se imprimen, así que esas columnas van vacías.');
+      } else {
+        say('Cargué ' + doc.rows.length + ' líneas desde ' + f.name + '.', 'ok');
+      }
     };
     reader.onerror = function () { say('No pude leer el archivo.', 'err'); };
     reader.readAsArrayBuffer(f);
