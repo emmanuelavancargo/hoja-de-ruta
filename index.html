@@ -367,6 +367,7 @@
     { col: 'Solicitante',            key: 'solicitante', tipo: 'cod',  req: false, ej: '2312345678' },
     { col: 'Nombre del solicitante', key: 'nombre',      tipo: 'txt',  req: true,  ej: 'Razón social del solicitante' },
     { col: 'Nombre Pagador',         key: 'pagador',     tipo: 'txt',  req: false, ej: 'Razón social del pagador' },
+    { col: 'Material',               key: 'materialCod', tipo: 'cod',  req: false, ej: '40103625' },
     { col: 'Descripción Material',   key: 'material',    tipo: 'txt',  req: true,  ej: 'SEM. MAIZ DUO 225 PWUE' },
     { col: 'Descripción Calibre',    key: 'calibre',     tipo: 'txt',  req: false, ej: 'R16' },
     { col: 'Cantidad entrega',       key: 'cantidad',    tipo: 'num',  req: true,  ej: '10' },
@@ -796,8 +797,13 @@
     return out;
   }
 
-  var COLKEY = { 'entrega':'entrega', 'pagador':'pagador', 'material':'material',
-                 'calibre':'calibre', 'banda':'banda', 'cant':'cantidad' };
+  /* "Material" means the code in current documents and the description in
+     ones printed before that column existed. Which it is depends on
+     whether the same header row also carries "Descripción" — resolved
+     per table, below, so both generations of PDF read correctly. */
+  var COLKEY = { 'entrega':'entrega', 'pagador':'pagador', 'material':'materialCod',
+                 'descripcion':'material', 'calibre':'calibre', 'banda':'banda',
+                 'cant':'cantidad' };
 
   function splitLugar(s) {
     var parts = s.split('·'), left = txt(parts[0]), dir = txt(parts.slice(1).join('·'));
@@ -875,6 +881,11 @@
       if (named.length >= 4) {
         cols = named.map(function (c) { return { x: c.x, key: COLKEY[normHeader(c.t)] }; })
                     .sort(function (a, b) { return a.x - b.x; });
+        /* no "Descripción" column: this table predates the Material code,
+           so its "Material" column holds the description */
+        if (!cols.some(function (c) { return c.key === 'material'; })) {
+          cols.forEach(function (c) { if (c.key === 'materialCod') c.key = 'material'; });
+        }
         continue;
       }
 
@@ -896,7 +907,8 @@
       s.items.forEach(function (r) {
         rows.push({
           transporte: txt(head.transporte), entrega: txt(r.entrega), solicitante: '',
-          nombre: txt(s.nombre), pagador: txt(r.pagador), material: txt(r.material),
+          nombre: txt(s.nombre), pagador: txt(r.pagador),
+          materialCod: txt(r.materialCod), material: txt(r.material),
           calibre: txt(r.calibre),
           cantidad: parseFloat(String(r.cantidad || '0').replace(/\./g, '').replace(',', '.')) || 0,
           banda: txt(r.banda), centro: txt(head.centro),
@@ -948,6 +960,15 @@
       X_LINE = 'FFD3DAE3', X_GREY = 'FF6E7D94', X_ORANGE = 'FFFF6C02';
   var HDR_ROW = 6;   /* rows 1–5 carry the logo band; the reader scans for this row */
 
+  /* derived from SCHEMA, never hardcoded: inserting a column upstream
+     would silently point the SUM and the number format at the wrong one */
+  var QTY_COL    = KEYS.indexOf('cantidad') + 1;
+  var QTY_LETTER = (function (n) {
+    var s = '';
+    while (n > 0) { var r = (n - 1) % 26; s = String.fromCharCode(65 + r) + s; n = (n - 1 - r) / 26; }
+    return s;
+  })(QTY_COL);
+
   function thin(c) { return { style: 'thin', color: { argb: c || X_LINE } }; }
 
   function buildXlsx(doc) {
@@ -959,7 +980,7 @@
       pageSetup: { orientation: 'landscape', fitToPage: true, fitToWidth: 1, fitToHeight: 0 }
     });
 
-    ws.columns = [12,11,12,32,32,42,10,11,8,20,15,16,34,10,14,16,24].map(function (w) {
+    ws.columns = [12,11,12,32,32,12,42,10,11,8,20,15,16,34,10,14,16,24].map(function (w) {
       return { width: w };
     });
 
@@ -1016,7 +1037,7 @@
         cell.border = { bottom: thin() };
         cell.alignment = { vertical: 'middle' };
         if (i % 2) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFAFBFD' } };
-        if (col === 8) {                                   /* Cantidad entrega */
+        if (col === QTY_COL) {
           cell.numFmt = '#,##0';
           cell.alignment = { vertical: 'middle', horizontal: 'right' };
           cell.font = { name: 'Calibri', size: 10, bold: true };
@@ -1027,17 +1048,20 @@
     /* ---- total row: a live SUM, so edits downstream recalculate ---- */
     rn++;
     var tr = ws.getRow(rn);
-    tr.getCell(8).value = { formula: 'SUM(H' + (HDR_ROW + 1) + ':H' + (rn - 1) + ')',
-                            result: total };
-    tr.getCell(7).value = 'TOTAL';
+    tr.getCell(QTY_COL).value = {
+      formula: 'SUM(' + QTY_LETTER + (HDR_ROW + 1) + ':' + QTY_LETTER + (rn - 1) + ')',
+      result: total
+    };
+    tr.getCell(QTY_COL - 1).value = 'TOTAL';
     tr.height = 22;
     for (var c = 1; c <= COLS.length; c++) {
       var cell = tr.getCell(c);
       cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: X_SOFT } };
       cell.border = { top: thin(X_NAVY), bottom: thin(X_NAVY) };
       cell.font = { name: 'Calibri', bold: true, size: 11, color: { argb: X_NAVY } };
-      cell.alignment = { vertical: 'middle', horizontal: c === 8 ? 'right' : (c === 7 ? 'right' : 'left') };
-      if (c === 8) cell.numFmt = '#,##0';
+      cell.alignment = { vertical: 'middle',
+                         horizontal: (c === QTY_COL || c === QTY_COL - 1) ? 'right' : 'left' };
+      if (c === QTY_COL) cell.numFmt = '#,##0';
     }
 
     /* ---- contacts ---- */
@@ -1145,7 +1169,7 @@
 
     stops.forEach(function (s, idx) {
       var body = s.items.map(function (r) {
-        return [txt(r.entrega), txt(r.pagador), txt(r.material),
+        return [txt(r.entrega), txt(r.pagador), txt(r.materialCod), txt(r.material),
                 txt(r.calibre), txt(r.banda), fmt(num(r.cantidad)), ''];
       });
 
@@ -1156,9 +1180,9 @@
       d.autoTable({
         startY: y + 15,
         margin: { left: M, right: M, top: 16 },
-        head: [['Entrega', 'Pagador', 'Material', 'Calibre', 'Banda', 'Cant.', 'OK']],
+        head: [['Entrega', 'Pagador', 'Material', 'Descripción', 'Calibre', 'Banda', 'Cant.', 'OK']],
         body: body,
-        foot: [['', '', '', '', 'Subtotal parada', fmt(s.total), '']],
+        foot: [['', '', '', '', '', 'Subtotal parada', fmt(s.total), '']],
         theme: 'grid',
         styles: { font: 'helvetica', fontSize: 7.3, cellPadding: 1.9,
                   lineColor: LINE, lineWidth: .15, textColor: [40, 52, 70], overflow: 'linebreak' },
@@ -1168,17 +1192,18 @@
                       fontSize: 7.5, lineColor: LINE, lineWidth: .15 },
         alternateRowStyles: { fillColor: [250, 251, 253] },
         columnStyles: {
-          0: { cellWidth: 19, font: 'courier', fontSize: 7 },
-          1: { cellWidth: 38 },
-          2: { cellWidth: 'auto' },
-          3: { cellWidth: 14, font: 'courier', fontSize: 7, halign: 'center' },
-          4: { cellWidth: 12, halign: 'center' },
-          5: { cellWidth: 14, halign: 'right', fontStyle: 'bold' },
-          6: { cellWidth: 10 }
+          0: { cellWidth: 18, font: 'courier', fontSize: 7 },
+          1: { cellWidth: 33 },
+          2: { cellWidth: 17, font: 'courier', fontSize: 7 },
+          3: { cellWidth: 'auto' },
+          4: { cellWidth: 14, font: 'courier', fontSize: 7, halign: 'center' },
+          5: { cellWidth: 12, halign: 'center' },
+          6: { cellWidth: 14, halign: 'right', fontStyle: 'bold' },
+          7: { cellWidth: 10 }
         },
         /* empty check box in the OK column */
         didDrawCell: function (data) {
-          if (data.section === 'body' && data.column.index === 6) {
+          if (data.section === 'body' && data.column.index === 7) {
             var bx = data.cell.x + data.cell.width / 2 - 1.8;
             var by = data.cell.y + data.cell.height / 2 - 1.8;
             d.setDrawColor(150, 163, 182).setLineWidth(.25);
@@ -1301,11 +1326,12 @@
           '<div class="stop-qty">' + fmt(s.total) + ' bultos</div>' +
         '</div>' +
         '<div class="tscroll"><table>' +
-          '<thead><tr><th>Entrega</th><th>Pagador</th><th>Material</th>' +
+          '<thead><tr><th>Entrega</th><th>Pagador</th><th>Material</th><th>Descripción</th>' +
           '<th>Calibre</th><th>Banda</th><th style="text-align:right">Cant.</th></tr></thead>' +
           '<tbody>' + s.items.map(function (r) {
             return '<tr><td class="code">' + esc(r.entrega) + '</td>' +
               '<td>' + esc(r.pagador) + '</td>' +
+              '<td class="code">' + esc(r.materialCod) + '</td>' +
               '<td class="mat">' + esc(r.material) + '</td>' +
               '<td class="code">' + esc(r.calibre) + '</td>' +
               '<td class="code">' + esc(r.banda) + '</td>' +

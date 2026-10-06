@@ -25,7 +25,7 @@ Por eso la vuelta PDF → Excel es exacta y no depende de extraer texto de la p�
 
 ## Esquema de la planilla
 
-Las 17 columnas son fijas; varía la cantidad de filas.
+Las 18 columnas son fijas; varía la cantidad de filas.
 
 | # | Columna | Tipo | Obligatoria |
 |---|---|---|---|
@@ -34,18 +34,21 @@ Las 17 columnas son fijas; varía la cantidad de filas.
 | 3 | Solicitante | Texto o número | no |
 | 4 | Nombre del solicitante | Texto | sí |
 | 5 | Nombre Pagador | Texto | no |
-| 6 | Descripción Material | Texto | sí |
-| 7 | Descripción Calibre | Texto | no |
-| 8 | Cantidad entrega | **Número** | sí |
-| 9 | Banda | Texto | no |
-| 10 | Nombre Centro | Texto | no |
-| 11 | Provincia | Texto | no |
-| 12 | Población | Texto | sí |
-| 13 | Dirección | Texto | no |
-| 14 | Lote | Texto | no |
-| 15 | Creado por | Texto | no |
-| 16 | Teléfono Contacto | Texto o número | no |
-| 17 | Nombre de Contacto | Texto | no |
+| 6 | Material | Texto o número | no |
+| 7 | Descripción Material | Texto | sí |
+| 8 | Descripción Calibre | Texto | no |
+| 9 | Cantidad entrega | **Número** | sí |
+| 10 | Banda | Texto | no |
+| 11 | Nombre Centro | Texto | no |
+| 12 | Provincia | Texto | no |
+| 13 | Población | Texto | sí |
+| 14 | Dirección | Texto | no |
+| 15 | Lote | Texto | no |
+| 16 | Creado por | Texto | no |
+| 17 | Teléfono Contacto | Texto o número | no |
+| 18 | Nombre de Contacto | Texto | no |
+
+`Material` es el código (p. ej. `40103625`); `Descripción Material` es el texto. En el PDF salen como dos columnas, `Material` y `Descripción`.
 
 «Obligatoria» aplica a la celda: la columna siempre tiene que existir, pero solo esas no pueden quedar vacías.
 
